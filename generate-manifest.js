@@ -1,84 +1,87 @@
 // generate-manifest.js
-// Scans /images/{street,landscape,architecture} and writes JSON lists to /data.
-// Also picks first 11 root /images files for the homepage grid.
+// Scans /images and writes sorted JSON manifests to /data
 
-const fs = require("fs");
-const path = require("path");
+const fs = require('fs');
+const path = require('path');
 
 const ROOT = __dirname;
-const SRC  = path.join(ROOT, "images");
-const OUT  = path.join(ROOT, "data");
+const SRC = path.join(ROOT, 'images');
+const OUT = path.join(ROOT, 'data');
 
-const CATS = ["street", "landscape", "architecture"];
+// categories (folder names under /images)
+const CATS = ['street', 'landscape', 'architecture'];
 
-// case-insensitive image extensions
-const exts = new Set([
-  ".jpg",".jpeg",".png",".webp",".gif",
-  ".JPG",".JPEG",".PNG",".WEBP",".GIF"
-]);
+// image file extensions we allow
+const exts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.JPG', '.JPEG', '.PNG', '.WEBP', '.GIF']);
 
-function ensureDir(dir) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+// ensure /data exists
+if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
+
+/**
+ * Extract a numeric index from file name.
+ * Works with names like "strt01-03.jpg", "arch01-12.JPG", "anything-7.png".
+ * Falls back to 0 if no number is found.
+ */
+function getIndexFromName(fileName) {
+  // grab the last group of digits before extension
+  // e.g. "strt01-03.jpg" -> "03"
+  const m = /(\d+)(?=\.[a-zA-Z0-9]+$)/.exec(fileName);
+  return m ? parseInt(m[1], 10) : 0;
 }
 
-function listImagesIn(dirRel) {
-  const dirAbs = path.join(SRC, dirRel);
-  if (!fs.existsSync(dirAbs)) return [];
-  return fs.readdirSync(dirAbs)
-    .filter(name => exts.has(path.extname(name)))
-    // newest first feels good for portfolio grids; swap to localeCompare for A→Z
-    .sort((a, b) => fs.statSync(path.join(dirAbs, b)).mtimeMs
-                  - fs.statSync(path.join(dirAbs, a)).mtimeMs)
-    .map(filename => {
-      // URL-encode any spaces, etc.
-      const safe = encodeURIComponent(filename).replace(/%2F/g, "/");
-      return `images/${dirRel}/${safe}`;
-    });
+/**
+ * List images in a directory, return absolute file names (not paths).
+ */
+function listImageFiles(absDir) {
+  if (!fs.existsSync(absDir)) return [];
+  return fs
+    .readdirSync(absDir)
+    .filter(f => exts.has(path.extname(f)));
 }
 
-function main() {
-  ensureDir(OUT);
+/**
+ * Produce a sorted list of web paths for a given category folder.
+ * Returns values like "images/street/strt01-01.jpg"
+ */
+function buildCategoryList(cat) {
+  const dirAbs = path.join(SRC, cat);
+  const files = listImageFiles(dirAbs);
 
-  const manifest = {};
+  // sort by the numeric part so 1..2..10 order is correct
+  files.sort((a, b) => getIndexFromName(a) - getIndexFromName(b));
 
-  // per-category lists
-  for (const cat of CATS) {
-    manifest[cat] = listImagesIn(cat);
-    fs.writeFileSync(
-      path.join(OUT, `${cat}.json`),
-      JSON.stringify(manifest[cat], null, 2)
-    );
-    console.log(`Wrote data/${cat}.json  (${manifest[cat].length} images)`);
-  }
-
-  // homepage selection — first 11 images in /images (not subfolders)
-  const homeDir = SRC;
-  const homeList = fs.readdirSync(homeDir)
-    .filter(name =>
-      exts.has(path.extname(name)) &&
-      !CATS.includes(name) // ignore folders with these names if present
-    )
-    .sort((a, b) => fs.statSync(path.join(homeDir, b)).mtimeMs
-                  - fs.statSync(path.join(homeDir, a)).mtimeMs)
-    .slice(0, 11)
-    .map(filename => {
-      const safe = encodeURIComponent(filename).replace(/%2F/g, "/");
-      return `images/${safe}`;
-    });
-
-  manifest.home = homeList;
-  fs.writeFileSync(
-    path.join(OUT, "home.json"),
-    JSON.stringify(homeList, null, 2)
-  );
-  console.log(`Wrote data/home.json  (${homeList.length} images)`);
-
-  // optional: combined manifest file
-  fs.writeFileSync(
-    path.join(OUT, "manifest.json"),
-    JSON.stringify(manifest, null, 2)
-  );
-  console.log("Wrote data/manifest.json");
+  return files.map(f => `images/${cat}/${encodeURIComponent(f)}`);
 }
 
-main();
+/**
+ * Build the "home" list from images placed directly under /images
+ * (not in subfolders).
+ */
+function buildHomeList() {
+  const entries = fs.readdirSync(SRC, { withFileTypes: true });
+  const files = entries
+    .filter(d => d.isFile() && exts.has(path.extname(d.name)))
+    .map(d => d.name);
+
+  files.sort((a, b) => getIndexFromName(a) - getIndexFromName(b));
+
+  // you said you keep 11 here; we’ll include them all (or slice(0, 11) if you want)
+  return files.map(f => `images/${encodeURIComponent(f)}`);
+}
+
+// -------- build & write files --------
+const manifest = {};
+for (const cat of CATS) {
+  const list = buildCategoryList(cat);
+  manifest[cat] = list;
+  fs.writeFileSync(path.join(OUT, `${cat}.json`), JSON.stringify(list, null, 2));
+  console.log(`Wrote data/${cat}.json  (${list.length} images)`);
+}
+
+const homeList = buildHomeList();
+fs.writeFileSync(path.join(OUT, 'home.json'), JSON.stringify(homeList, null, 2));
+console.log(`Wrote data/home.json  (${homeList.length} images)`);
+
+// combined for convenience
+fs.writeFileSync(path.join(OUT, 'manifest.json'), JSON.stringify({ ...manifest, home: homeList }, null, 2));
+console.log('Wrote data/manifest.json');

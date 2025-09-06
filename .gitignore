@@ -1,3 +1,9 @@
 node_modules/
 .DS_Store
 .env
+
+images/originals/
+*.CR2
+*.NEF
+*.ARW
+*.tif
